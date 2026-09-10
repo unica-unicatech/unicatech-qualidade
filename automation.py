@@ -46,6 +46,7 @@ STATUS_INVALID_INPUT = "cep_ou_numero_invalido"
 MOUSE_MOVE_SECONDS = 0.25  # visible glide instead of an instant teleport, but still quick
 
 MAX_LOGIN_RETRIES = 2  # how many consecutive "not logged in" checks before auto-pausing
+MAX_TEMPLATE_DRIFT_PX = 60  # see _locate_click_point's sanity check against the manual calibration point
 OCR_RETRIES = 4
 LOGIN_CHECK_INTERVAL = 6  # in dual-window mode, re-check login every N fills per lane (not every single one)
 
@@ -184,14 +185,32 @@ class AutomationRunner:
         if cached is not None:
             return cached
 
+        config_point = None
+        if name in self.config:
+            config_point = citrix_utils.absolute_point(win, self.config[name]["x"], self.config[name]["y"])
+
         point = None
         if auto_detect.has_templates():
             region = (win.left, win.top, win.width, win.height)
             pos = auto_detect._locate_point(name, lambda *a, **k: None, region=region)
             if pos is not None:
                 point = (pos.x, pos.y)
+                # Sanity check against the manually-calibrated point: cep_field,
+                # numero_field and documento_field are near-identical blank input
+                # boxes, so appearance matching can confidently lock onto the
+                # WRONG one of the three (seen in practice: CEP typed into the
+                # Documento field). The manual calibration point is ground truth
+                # right after being (re)captured, so if the image match landed
+                # far from it, trust the manual point instead of the match.
+                if config_point is not None:
+                    dx = point[0] - config_point[0]
+                    dy = point[1] - config_point[1]
+                    if (dx * dx + dy * dy) ** 0.5 > MAX_TEMPLATE_DRIFT_PX:
+                        self.log(f"   Aviso: detecção por imagem de '{name}' achou {point}, longe "
+                                 f"do ponto calibrado manualmente {config_point} -- usando o calibrado.")
+                        point = None
         if point is None:
-            point = citrix_utils.absolute_point(win, self.config[name]["x"], self.config[name]["y"])
+            point = config_point
 
         self._click_cache[key] = point
         return point
