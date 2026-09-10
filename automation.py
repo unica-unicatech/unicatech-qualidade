@@ -76,7 +76,6 @@ class AutomationRunner:
         self._last_window_pos = None
         self._click_cache = {}  # (win.left, win.top, element_name) -> (x, y), see _locate_click_point
         self._region_cache = {}  # (win.left, win.top, element_name) -> (x1,y1,x2,y2), see _locate_region_box
-        self._field_box_cache = {}  # (win.left, win.top, element_name) -> (x1,y1,x2,y2), see _field_ocr_box
         self._force_recheck_login = True  # re-check on the very first item / right after a resume
 
         self._load_checkpoint_if_matching()
@@ -188,11 +187,9 @@ class AutomationRunner:
         point = None
         if auto_detect.has_templates():
             region = (win.left, win.top, win.width, win.height)
-            box, path = auto_detect._locate_box(name, lambda *a, **k: None, region=region)
-            if box is not None:
-                rx, ry = auto_detect._click_ratio(path)
-                point = (int(box.left + box.width * rx), int(box.top + box.height * ry))
-                self._field_box_cache[key] = (box.left, box.top, box.left + box.width, box.top + box.height)
+            pos = auto_detect._locate_point(name, lambda *a, **k: None, region=region)
+            if pos is not None:
+                point = (pos.x, pos.y)
         if point is None:
             point = citrix_utils.absolute_point(win, self.config[name]["x"], self.config[name]["y"])
 
@@ -202,17 +199,15 @@ class AutomationRunner:
     def _field_ocr_box(self, win, name: str):
         """Region to OCR-read back a filled field's value, for verification.
 
-        Prefers the actual matched template box for `name` (cached alongside its
-        click point in _locate_click_point) -- its real size/position on screen --
-        over a fixed pixel offset from the click point, since fields aren't all the
-        same size/shape (e.g. numero_field's box differs from cep_field's), and a
-        one-size-fits-all crop can miss the digits entirely on some fields."""
-        key = (win.left, win.top, name)
-        box = self._field_box_cache.get(key)
-        if box is not None:
-            x1, y1, x2, y2 = box
-            pad = 4
-            return x1 - pad, y1 - pad, x2 + pad, y2 + pad
+        Deliberately crops a tight band around the CLICK point, not the matched
+        template's full box: some field templates are captured with extra context
+        above the input (e.g. its label -- see auto_detect._click_ratio), so the
+        matched box can span both the label line and the input line. Debug
+        screenshots showed that a crop spanning both lines reads back as EMPTY
+        every time, because the digit-only OCR call uses psm 7 (single text line)
+        -- it doesn't ever misread the label, it just fails outright on a
+        two-line image. The click point itself is calibrated to sit inside the
+        actual input, so cropping around just that stays single-line."""
         x, y = self._locate_click_point(win, name)
         return x - 145, y - 22, x + 145, y + 22
 
@@ -246,8 +241,6 @@ class AutomationRunner:
             del self._click_cache[key]
         for key in [k for k in self._region_cache if k[:2] == key_prefix]:
             del self._region_cache[key]
-        for key in [k for k in self._field_box_cache if k[:2] == key_prefix]:
-            del self._field_box_cache[key]
 
     # ---------- per-record processing ----------
     def _read_field_digits(self, win, field_name: str) -> str:
