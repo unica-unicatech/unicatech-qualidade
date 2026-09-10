@@ -297,47 +297,49 @@ class AutomationRunner:
         return got
 
     def _fill_field(self, win, field_name: str, value: str):
-        """Fill the field and OCR-read it back, retrying if it doesn't match.
+        """Fill the field, then OCR-read it back purely for diagnostics.
 
-        Always fills via clipboard paste (one paste action for the whole value)
-        when available -- proven reliable across machines/sessions, unlike
-        simulating individual keystrokes: on some PCs (seen with Citrix over a
-        laggier connection), typed keystrokes get registered twice by the remote
-        app regardless of typing speed (e.g. '776' arrives as '777766'), so typing
-        is only ever used as a last-resort fallback when clipboard isn't
-        available, never as a "retry" for a paste that just needed more time to
-        show up on screen (see _read_field_digits_settled)."""
+        Fills via a SINGLE clipboard paste (one paste action for the whole value)
+        when available -- across every debug screenshot gathered while chasing
+        field-corruption reports, paste never once actually failed to land the
+        correct value. Typing (simulating individual keystrokes) is only used as
+        a fallback when clipboard isn't available at all, since it has an actual
+        proven failure mode: on some PCs/sessions, typed keystrokes get
+        registered twice by the remote app regardless of speed (e.g. '776'
+        arrives as '777766').
+
+        This does NOT retry by re-clicking/re-pasting on an OCR mismatch anymore
+        -- that used to be the ONLY thing corrupting an already-correct value
+        (either via the typing-duplication bug above, or by re-clicking mid-fill
+        and landing wrong). The digit-only OCR readback is also just unreliable
+        on short values (e.g. misread '26' as '196' -- clearly visible as
+        correct '26' in the saved debug screenshot), so treating a mismatch as
+        "must retry" caused more harm (repeated re-pasting, risk of interfering
+        with the next click) than it ever prevented. A mismatch is now only
+        logged, with a debug screenshot, so real failures are still visible."""
         x, y = self._locate_click_point(win, field_name)
+        pyautogui.click(x, y, duration=MOUSE_MOVE_SECONDS)
+        time.sleep(0.15)
+        pyautogui.hotkey("ctrl", "a")
+        pyautogui.press("delete")
+        time.sleep(0.1)
         if not value:
-            pyautogui.click(x, y, duration=MOUSE_MOVE_SECONDS)
-            time.sleep(0.15)
-            pyautogui.hotkey("ctrl", "a")
-            pyautogui.press("delete")
-            time.sleep(0.1)
             return
 
-        attempts = 3
-        for attempt in range(attempts):
-            pyautogui.click(x, y, duration=MOUSE_MOVE_SECONDS)
-            time.sleep(0.15)
-            pyautogui.hotkey("ctrl", "a")
-            pyautogui.press("delete")
-            time.sleep(0.1)
-            if _HAS_CLIPBOARD:
-                _set_clipboard_text(value)
-                time.sleep(0.05)
-                pyautogui.hotkey("ctrl", "v")
-            else:
-                interval = 0.05 + attempt * 0.05
-                pyautogui.typewrite(value, interval=interval)
-            time.sleep(0.15)
-            got = self._read_field_digits_settled(win, field_name, value)
-            if got == value:
-                return
-            debug_path = self._save_field_debug_shot(win, field_name, attempt)
-            self.log(f"   Aviso: campo {field_name} leu '{got}' (esperado '{value}'), "
-                     f"tentativa {attempt + 1}/{attempts}. Print salvo em: {debug_path}")
-        self.log(f"   Aviso: campo {field_name} pode ter ficado incorreto após {attempts} tentativas.")
+        if _HAS_CLIPBOARD:
+            _set_clipboard_text(value)
+            time.sleep(0.05)
+            pyautogui.hotkey("ctrl", "v")
+        else:
+            pyautogui.typewrite(value, interval=0.05)
+        time.sleep(0.15)
+
+        got = self._read_field_digits_settled(win, field_name, value)
+        if got != value:
+            debug_path = self._save_field_debug_shot(win, field_name, 0)
+            self.log(f"   Aviso: campo {field_name} leu '{got}' (esperado '{value}') -- "
+                     f"pode ser ruído de OCR, não necessariamente erro de preenchimento. "
+                     f"Print salvo em: {debug_path}")
 
     def _save_field_debug_shot(self, win, field_name: str, attempt: int) -> str:
         """Save exactly the region the OCR verification is reading, so a failed
