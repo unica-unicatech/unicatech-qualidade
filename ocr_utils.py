@@ -128,24 +128,46 @@ def read_entries_total(x1, y1, x2, y2):
     return None, best_text
 
 
+def _best_substring_match(text: str, target: str):
+    """Like _best_substring_ratio, but also returns the (start, end) window that
+    scored best, so the caller can strip it out of `text` afterward."""
+    n = len(target)
+    if n == 0:
+        return 0.0, 0, 0
+    if len(text) <= n:
+        return difflib.SequenceMatcher(None, text, target).ratio(), 0, len(text)
+    best, best_start = 0.0, 0
+    step = max(1, n // 4)
+    for i in range(0, len(text) - n + 1, step):
+        ratio = difflib.SequenceMatcher(None, text[i:i + n], target).ratio()
+        if ratio > best:
+            best, best_start = ratio, i
+    return best, best_start, best_start + n
+
+
 def _best_substring_ratio(text: str, target: str) -> float:
     """Best similarity of `target` against any same-length window of `text`.
     Comparing the whole (possibly noisy) text against a short target phrase dilutes
     the ratio when there's a lot of surrounding junk (e.g. watermark garbage); this
     instead slides a target-sized window across the text and keeps the best match,
     so an embedded match isn't drowned out by noise elsewhere in the string."""
-    n = len(target)
-    if n == 0:
-        return 0.0
-    if len(text) <= n:
-        return difflib.SequenceMatcher(None, text, target).ratio()
-    best = 0.0
-    step = max(1, n // 4)
-    for i in range(0, len(text) - n + 1, step):
-        ratio = difflib.SequenceMatcher(None, text[i:i + n], target).ratio()
-        if ratio > best:
-            best = ratio
-    return best
+    ratio, _, _ = _best_substring_match(text, target)
+    return ratio
+
+
+# The results table's column header row ("MOVIMENTO DATA NOME DO CLIENTE...") is
+# static -- always on screen regardless of whether the table actually has data --
+# and long enough on its own to pass classify_table_region's min_chars gate. If
+# the crop also picks up some watermark noise but the real content underneath
+# (a genuine data row, or "No data available") doesn't come through legibly, the
+# header alone would otherwise be enough to wrongly default to "data" (seen in
+# practice: a record eliminated based on header + noise, with no real evidence of
+# an actual result). It's stripped out before that final decision so only
+# genuinely per-record content counts.
+HEADER_PHRASE = (
+    "movimento data nome do cliente endereco complemento bairro cidade cep "
+    "parque plano origem tecnologia"
+)
 
 
 def classify_table_region(x1, y1, x2, y2, min_chars: int = 6, match_threshold: float = 0.55,
@@ -168,6 +190,7 @@ def classify_table_region(x1, y1, x2, y2, min_chars: int = 6, match_threshold: f
     invalid_target = re.sub(r"[^a-z]", "", INVALID_INPUT_PHRASE)
     psm_modes = PSM_MODES_FAST if fast else PSM_MODES
     best_text = ""
+    best_empty_ratio = 0.0
     for variant in _preprocess_variants(img, fast=fast):
         for psm in psm_modes:
             text = pytesseract.image_to_string(variant, config=f"--psm {psm}").strip()
@@ -175,13 +198,30 @@ def classify_table_region(x1, y1, x2, y2, min_chars: int = 6, match_threshold: f
                 best_text = text
             cleaned = re.sub(r"[^a-z]", "", text.lower())
             if len(cleaned) >= min_chars:
-                if _best_substring_ratio(cleaned, empty_target) >= match_threshold:
+                empty_ratio = _best_substring_ratio(cleaned, empty_target)
+                best_empty_ratio = max(best_empty_ratio, empty_ratio)
+                if empty_ratio >= match_threshold:
                     return "empty", text
                 if _best_substring_ratio(cleaned, invalid_target) >= match_threshold:
                     return "invalid_input", text
 
+    # A "suspiciously close but not quite confirmed" match against the empty
+    # phrase (seen in practice: 0.45, e.g. a watermark partially obscuring "No
+    # data available in table") is much more likely to mean "actually empty,
+    # just hard to read" than "actually real data" -- so it should NOT fall
+    # through to the "data" default below. Treating it as inconclusive lets the
+    # caller retry (watermark drifts, a later attempt may read cleanly) instead
+    # of confidently eliminating a record based on a near-miss.
+    if best_empty_ratio >= 0.40:
+        return "inconclusive", best_text
+
     cleaned_best = re.sub(r"[^a-z]", "", best_text.lower())
-    if len(cleaned_best) >= min_chars:
+    residual = cleaned_best
+    header_target = re.sub(r"[^a-z]", "", HEADER_PHRASE)
+    header_ratio, hstart, hend = _best_substring_match(cleaned_best, header_target)
+    if header_ratio >= match_threshold:
+        residual = cleaned_best[:hstart] + cleaned_best[hend:]
+    if len(residual) >= min_chars:
         return "data", best_text
     return "inconclusive", best_text
 
