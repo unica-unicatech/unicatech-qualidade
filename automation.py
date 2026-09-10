@@ -236,7 +236,13 @@ class AutomationRunner:
         '45102606' for an 8-digit CEP, or empty) despite the correct value
         being clearly visible in the crop."""
         x, y = self._locate_click_point(win, name)
-        return x - 70, y - 20, x + 70, y + 20
+        # Asymmetric vertical pad: on a tighter layout the label sits close enough
+        # above the input that even +/-20 reaches up into it (confirmed by debug
+        # screenshots showing "Numero"/label text captured alongside the correct
+        # value, reading back empty for the same two-line reason as the box-based
+        # crop this replaced). Padding up less than down keeps the label out while
+        # still covering the full digit height below the click point.
+        return x - 70, y - 10, x + 70, y + 18
 
     def _locate_region_box(self, win, name: str, pad: int = 8):
         """Where `name` (app_marker_region/table_row_region) is for this window, as
