@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.venv/
+venv/
+env/
+
+# Config sensível (usar config.example.json como referência)
+config.json
+
+# Saídas geradas em runtime
+output/
+state/
+
+# Logs
+*.log
+
+# IDE / OS
+.vscode/
+.idea/
+Thumbs.db
+.DS_Store

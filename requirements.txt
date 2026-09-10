@@ -1,0 +1,9 @@
+pyautogui
+pytesseract
+pillow
+pandas
+openpyxl
+keyboard
+pygetwindow
+pywin32
+opencv-python

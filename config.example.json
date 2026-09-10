@@ -1,0 +1,10 @@
+{
+  "window_title_contains": "Vivo Qualidade",
+  "documento_field": {"x": 0, "y": 0},
+  "pesquisar_button": {"x": 0, "y": 0},
+  "table_row_region": {"x1": 0, "y1": 0, "x2": 0, "y2": 0},
+  "app_marker_region": {"x1": 0, "y1": 0, "x2": 0, "y2": 0},
+  "wait_after_search_seconds": 4.5,
+  "delay_between_cnpjs_seconds": 1.5,
+  "tesseract_cmd": "C:\\Program Files\\Tesseract-OCR\\tesseract.exe"
+}
