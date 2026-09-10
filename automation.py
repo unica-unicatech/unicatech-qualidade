@@ -437,11 +437,18 @@ class AutomationRunner:
                 return STATUS_INVALID_INPUT
             if kind == "data":
                 if self._looks_like_watermark_noise(text):
-                    self.log(f"   [{cnpj}] (debug) tabela lida como 'com dados', mas o texto bate quase "
-                             f"idêntico com uma leitura de OUTRO CNPJ -- provavelmente é a marca d'água "
-                             f"da sessão, não dado real da tabela. Marcando como erro pra reprocessar "
-                             f"em vez de eliminar por engano. Texto OCR: '{text}'")
-                    return STATUS_ERROR
+                    self.log(f"   [{cnpj}] (debug) tentativa {attempt}/{OCR_RETRIES} leu 'com dados', mas "
+                             f"o texto parece ser a marca d'água da sessão, não dado real da tabela "
+                             f"(tentativa {attempt}/{OCR_RETRIES}). Texto OCR: '{text}'. Aguardando a "
+                             f"marca d'água se mover e tentando de novo...")
+                    # Don't give up on the FIRST watermark-looking read -- the watermark
+                    # drifts across the page over time (see auto_detect.py's CONFIDENCE
+                    # comment), so waiting and re-reading often gets a clean shot at the
+                    # real content within the same search, instead of burning a whole
+                    # extra reprocessing pass later for something a few more seconds
+                    # here would have resolved.
+                    time.sleep(1.5)
+                    continue
                 self.log(f"   [{cnpj}] (debug) tabela lida como COM DADOS. Texto OCR: '{text}'")
                 self._data_signatures.append(self._clean_for_signature(text))
                 return STATUS_ELIMINATE
@@ -449,7 +456,8 @@ class AutomationRunner:
                      f"melhor leitura: '{text}'. Aguardando mais um pouco...")
             time.sleep(1.5)
 
-        self.log(f"   [{cnpj}] Falha final de OCR. Última leitura: '{best_text}'")
+        self.log(f"   [{cnpj}] Falha final de OCR (marca d'água persistente ou tabela ilegível). "
+                 f"Última leitura: '{best_text}'")
         return STATUS_ERROR
 
     def _process_one(self, cnpj: str, win) -> str:
