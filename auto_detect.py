@@ -187,6 +187,22 @@ def try_auto_calibrate(log=print) -> bool:
                 return {"x": old["x"], "y": old["y"]}
         return {"x": new_x, "y": new_y}
 
+    def _guarded_region(name, new_x1, new_y1, new_x2, new_y2):
+        """Same guard as _guarded_point, for the two region elements. A region
+        match landing on the wrong spot silently corrupts the table-reading
+        crop (seen in practice: stable garbage OCR output like 'rq |' every
+        single attempt, because the crop was consistently pointed at the wrong
+        static content instead of the results table)."""
+        old = old_config.get(name)
+        if old is not None:
+            dx, dy = new_x1 - old["x1"], new_y1 - old["y1"]
+            if (dx * dx + dy * dy) ** 0.5 > MAX_DRIFT_PX:
+                log(f"  Aviso: detecção por imagem de '{name}' ficou longe da última calibração "
+                    f"manual -- mantendo a calibração manual. Se o layout realmente mudou, "
+                    f"recalibre manualmente.")
+                return dict(old)
+        return {"x1": new_x1, "y1": new_y1, "x2": new_x2, "y2": new_y2}
+
     config = {
         "window_title_contains": citrix_utils.stable_title_anchor(win.title),
         "wait_after_search_seconds": old_config.get("wait_after_search_seconds", 3.5),
@@ -195,16 +211,18 @@ def try_auto_calibrate(log=print) -> bool:
         "cep_field": _guarded_point("cep_field", int(cep_pos.x - win.left), int(cep_pos.y - win.top)),
         "numero_field": _guarded_point("numero_field", int(numero_pos.x - win.left), int(numero_pos.y - win.top)),
         "pesquisar_button": {"x": int(btn_pos.x - win.left), "y": int(btn_pos.y - win.top)},
-        "app_marker_region": {
-            "x1": int(marker_box.left - win.left), "y1": int(marker_box.top - win.top),
-            "x2": int(marker_box.left + marker_box.width - win.left),
-            "y2": int(marker_box.top + marker_box.height - win.top),
-        },
-        "table_row_region": {
-            "x1": int(row_box.left - win.left), "y1": int(row_box.top - win.top),
-            "x2": int(row_box.left + row_box.width - win.left),
-            "y2": int(row_box.top + row_box.height - win.top),
-        },
+        "app_marker_region": _guarded_region(
+            "app_marker_region",
+            int(marker_box.left - win.left), int(marker_box.top - win.top),
+            int(marker_box.left + marker_box.width - win.left),
+            int(marker_box.top + marker_box.height - win.top),
+        ),
+        "table_row_region": _guarded_region(
+            "table_row_region",
+            int(row_box.left - win.left), int(row_box.top - win.top),
+            int(row_box.left + row_box.width - win.left),
+            int(row_box.top + row_box.height - win.top),
+        ),
     }
 
     CONFIG_PATH.write_text(json.dumps(config, indent=2, ensure_ascii=False), encoding="utf-8")

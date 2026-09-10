@@ -256,14 +256,30 @@ class AutomationRunner:
         if cached is not None:
             return cached
 
+        config_box = None
+        if name in self.config:
+            config_box = citrix_utils.absolute_region(win, self.config[name], pad=pad)
+
         box = None
         if auto_detect.has_templates():
             region = (win.left, win.top, win.width, win.height)
             b = auto_detect._locate_region(name, lambda *a, **k: None, region=region)
             if b is not None:
                 box = (b.left - pad, b.top - pad, b.left + b.width + pad, b.top + b.height + pad)
+                # Same sanity check as _locate_click_point: don't trust an
+                # appearance match that landed far from the manually calibrated
+                # region -- seen in practice as table-read OCR returning the
+                # same garbage every attempt because the crop was pinned to the
+                # wrong static spot on screen instead of the results table.
+                if config_box is not None:
+                    dx = box[0] - config_box[0]
+                    dy = box[1] - config_box[1]
+                    if (dx * dx + dy * dy) ** 0.5 > MAX_TEMPLATE_DRIFT_PX:
+                        self.log(f"   Aviso: detecção por imagem de '{name}' achou {box}, longe "
+                                 f"da região calibrada manualmente {config_box} -- usando a calibrada.")
+                        box = None
         if box is None:
-            box = citrix_utils.absolute_region(win, self.config[name], pad=pad)
+            box = config_box
 
         self._region_cache[key] = box
         return box
