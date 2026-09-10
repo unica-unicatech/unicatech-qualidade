@@ -76,6 +76,7 @@ class AutomationRunner:
         self._last_window_pos = None
         self._click_cache = {}  # (win.left, win.top, element_name) -> (x, y), see _locate_click_point
         self._region_cache = {}  # (win.left, win.top, element_name) -> (x1,y1,x2,y2), see _locate_region_box
+        self._field_box_cache = {}  # (win.left, win.top, element_name) -> (x1,y1,x2,y2), see _field_ocr_box
         self._force_recheck_login = True  # re-check on the very first item / right after a resume
 
         self._load_checkpoint_if_matching()
@@ -187,14 +188,33 @@ class AutomationRunner:
         point = None
         if auto_detect.has_templates():
             region = (win.left, win.top, win.width, win.height)
-            pos = auto_detect._locate_point(name, lambda *a, **k: None, region=region)
-            if pos is not None:
-                point = (pos.x, pos.y)
+            box, path = auto_detect._locate_box(name, lambda *a, **k: None, region=region)
+            if box is not None:
+                rx, ry = auto_detect._click_ratio(path)
+                point = (int(box.left + box.width * rx), int(box.top + box.height * ry))
+                self._field_box_cache[key] = (box.left, box.top, box.left + box.width, box.top + box.height)
         if point is None:
             point = citrix_utils.absolute_point(win, self.config[name]["x"], self.config[name]["y"])
 
         self._click_cache[key] = point
         return point
+
+    def _field_ocr_box(self, win, name: str):
+        """Region to OCR-read back a filled field's value, for verification.
+
+        Prefers the actual matched template box for `name` (cached alongside its
+        click point in _locate_click_point) -- its real size/position on screen --
+        over a fixed pixel offset from the click point, since fields aren't all the
+        same size/shape (e.g. numero_field's box differs from cep_field's), and a
+        one-size-fits-all crop can miss the digits entirely on some fields."""
+        key = (win.left, win.top, name)
+        box = self._field_box_cache.get(key)
+        if box is not None:
+            x1, y1, x2, y2 = box
+            pad = 4
+            return x1 - pad, y1 - pad, x2 + pad, y2 + pad
+        x, y = self._locate_click_point(win, name)
+        return x - 145, y - 22, x + 145, y + 22
 
     def _locate_region_box(self, win, name: str, pad: int = 8):
         """Where `name` (app_marker_region/table_row_region) is for this window, as
@@ -226,11 +246,13 @@ class AutomationRunner:
             del self._click_cache[key]
         for key in [k for k in self._region_cache if k[:2] == key_prefix]:
             del self._region_cache[key]
+        for key in [k for k in self._field_box_cache if k[:2] == key_prefix]:
+            del self._field_box_cache[key]
 
     # ---------- per-record processing ----------
     def _read_field_digits(self, win, field_name: str) -> str:
-        x, y = self._locate_click_point(win, field_name)
-        text = ocr_utils.read_digits(x - 145, y - 22, x + 145, y + 22)
+        x1, y1, x2, y2 = self._field_ocr_box(win, field_name)
+        text = ocr_utils.read_digits(x1, y1, x2, y2)
         return re.sub(r"\D", "", text)
 
     def _fill_field(self, win, field_name: str, value: str):
@@ -298,13 +320,7 @@ class AutomationRunner:
         record = self._records_by_cnpj.get(cnpj)
         if not record or not record.get("cep"):
             return True
-        x, y = self._locate_click_point(win, "cep_field")
-        # Wide horizontal crop: the click point is roughly the box's center, but the
-        # typed digits are left-aligned inside it, so a narrow symmetric crop can
-        # clip the start of the text and misread it. Digit-only OCR (no letters/
-        # symbols to confuse with) plus this wider box makes the read reliable.
-        text = ocr_utils.read_digits(x - 145, y - 22, x + 145, y + 22)
-        got = re.sub(r"\D", "", text)
+        got = self._read_field_digits(win, "cep_field")
         expected = record["cep"]
         match = bool(got) and (got == expected or got in expected or expected in got)
         if not match:
