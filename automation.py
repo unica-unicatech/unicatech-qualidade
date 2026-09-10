@@ -2,6 +2,7 @@
 classify the result as KEEP (no data found -> eligible) or ELIMINATE (data found).
 CNPJ is carried along purely as the output's identifying/reference column -- the
 site itself is searched by CEP + Número, not by Documento/CNPJ."""
+import difflib
 import json
 import random
 import re
@@ -78,6 +79,7 @@ class AutomationRunner:
         self._click_cache = {}  # (win.left, win.top, element_name) -> (x, y), see _locate_click_point
         self._region_cache = {}  # (win.left, win.top, element_name) -> (x1,y1,x2,y2), see _locate_region_box
         self._force_recheck_login = True  # re-check on the very first item / right after a resume
+        self._data_signatures = []  # cleaned "data" OCR texts seen so far, see _read_result
 
         self._load_checkpoint_if_matching()
 
@@ -361,6 +363,28 @@ class AutomationRunner:
             self.log(f"   [{cnpj}] (debug) campo CEP leu '{got}' (esperado '{expected}').")
         return match
 
+    @staticmethod
+    def _clean_for_signature(text: str) -> str:
+        return re.sub(r"[^a-z0-9]", "", text.lower())
+
+    def _looks_like_watermark_noise(self, text: str) -> bool:
+        """A 'data' classification should mean genuine, per-record table content --
+        but a session watermark (username/IP overlaid on the page, drifting across
+        it -- see auto_detect.py's CONFIDENCE comment) sitting inside the table
+        crop can read as legible OCR text that happens not to match the 'no data'
+        phrase, wrongly defaulting to 'data' (seen in practice: eliminating a
+        client based on watermark garbage). Real data legitimately varies company
+        to company; the watermark doesn't. So: if this reading is nearly
+        identical to a 'data' reading already seen for a DIFFERENT record in this
+        same run, it's almost certainly static noise, not this record's data."""
+        cleaned = self._clean_for_signature(text)
+        if len(cleaned) < 6:
+            return False
+        for seen in self._data_signatures:
+            if difflib.SequenceMatcher(None, cleaned, seen).ratio() >= 0.88:
+                return True
+        return False
+
     def _read_result(self, cnpj: str, win, verify: bool = False) -> str:
         """OCR-classify the results table for the search already triggered on `win`.
         Caller is responsible for having waited long enough beforehand.
@@ -393,7 +417,14 @@ class AutomationRunner:
                          f"Texto OCR: '{text}'")
                 return STATUS_INVALID_INPUT
             if kind == "data":
+                if self._looks_like_watermark_noise(text):
+                    self.log(f"   [{cnpj}] (debug) tabela lida como 'com dados', mas o texto bate quase "
+                             f"idêntico com uma leitura de OUTRO CNPJ -- provavelmente é a marca d'água "
+                             f"da sessão, não dado real da tabela. Marcando como erro pra reprocessar "
+                             f"em vez de eliminar por engano. Texto OCR: '{text}'")
+                    return STATUS_ERROR
                 self.log(f"   [{cnpj}] (debug) tabela lida como COM DADOS. Texto OCR: '{text}'")
+                self._data_signatures.append(self._clean_for_signature(text))
                 return STATUS_ELIMINATE
             self.log(f"   [{cnpj}] Tabela ainda sem texto legível (tentativa {attempt}/{OCR_RETRIES}), "
                      f"melhor leitura: '{text}'. Aguardando mais um pouco...")
