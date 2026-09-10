@@ -293,9 +293,27 @@ class AutomationRunner:
             got = self._read_field_digits(win, field_name)
             if got == value:
                 return
+            debug_path = self._save_field_debug_shot(win, field_name, attempt)
             self.log(f"   Aviso: campo {field_name} leu '{got}' (esperado '{value}'), "
-                     f"tentativa {attempt + 1}/{attempts}.")
+                     f"tentativa {attempt + 1}/{attempts}. Print salvo em: {debug_path}")
         self.log(f"   Aviso: campo {field_name} pode ter ficado incorreto após {attempts} tentativas.")
+
+    def _save_field_debug_shot(self, win, field_name: str, attempt: int) -> str:
+        """Save exactly the region the OCR verification is reading, so a failed
+        readback can be diagnosed from the actual pixels instead of guesswork
+        (e.g. a click/coordinate offset -- possible on a PC with display scaling
+        different from 100% -- would show up here as the crop landing on the
+        wrong spot, or the field looking empty/blank in the image itself)."""
+        try:
+            debug_dir = OUTPUT_DIR / "debug_field_reads"
+            debug_dir.mkdir(exist_ok=True)
+            x1, y1, x2, y2 = self._field_ocr_box(win, field_name)
+            img = ocr_utils.grab_region(x1, y1, x2, y2)
+            path = debug_dir / f"{field_name}_{int(time.time())}_{attempt}.png"
+            img.save(path)
+            return str(path)
+        except Exception as exc:
+            return f"(falha ao salvar print: {exc})"
 
     def _start_search(self, cnpj: str, win):
         """Fill CEP + Número and hit Pesquisar. Does NOT wait for the result --
