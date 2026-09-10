@@ -275,11 +275,11 @@ class AutomationRunner:
         landed correctly -- this waits for the read to either match or stabilize
         instead of trusting the very first snapshot."""
         got = ""
-        for _ in range(4):
+        for _ in range(8):
             got = self._read_field_digits(win, field_name)
             if got == expected:
                 return got
-            time.sleep(0.25)
+            time.sleep(0.35)
         return got
 
     def _fill_field(self, win, field_name: str, value: str):
