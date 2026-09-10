@@ -214,18 +214,17 @@ def classify_table_region(x1, y1, x2, y2, min_chars: int = 6, match_threshold: f
                 if _best_substring_ratio(cleaned, invalid_target) >= match_threshold:
                     return "invalid_input", text
 
-    # A "suspiciously close but not quite confirmed" match against the empty
-    # phrase (seen in practice: 0.45, e.g. a watermark partially obscuring "No
-    # data available in table") is much more likely to mean "actually empty,
-    # just hard to read" than "actually real data" -- so it should NOT fall
-    # through to the "data" default below. Only checked against the single
-    # best_text chosen above (not the max over every variant tried) -- checking
-    # every variant let one unlucky noisy reading veto an otherwise-clean "data"
-    # result (see the newline-preference comment above for the concrete case).
+    # NOTE: a lower "suspiciously close to empty" band (e.g. treat a 0.40-0.55
+    # ratio as inconclusive rather than defaulting to "data") was tried here and
+    # reverted -- under heavy watermark garbling, genuinely real data can score
+    # just as close to the empty phrase as a genuinely empty table (0.41-0.50
+    # seen for confirmed real-data rows), so that band caused MORE misclassified
+    # records (real data marked "erro") than it prevented. Distinguishing
+    # "empty" from "data" once neither hits the confirmed 0.55 threshold isn't
+    # reliable from the row text alone -- read_entries_total()'s "Showing X to Y
+    # of Z entries" footer (unused today) is a cleaner signal if this needs
+    # revisiting, since it's a single number rather than a garbled row of text.
     cleaned_best = re.sub(r"[^a-z]", "", best_text.lower())
-    if len(cleaned_best) >= min_chars and _best_substring_ratio(cleaned_best, empty_target) >= 0.40:
-        return "inconclusive", best_text
-
     residual = cleaned_best
     header_target = re.sub(r"[^a-z]", "", HEADER_PHRASE)
     header_ratio, hstart, hend = _best_substring_match(cleaned_best, header_target)
