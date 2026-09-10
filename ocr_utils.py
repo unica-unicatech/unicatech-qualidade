@@ -155,20 +155,6 @@ def _best_substring_ratio(text: str, target: str) -> float:
     return ratio
 
 
-# The results table's column header row ("MOVIMENTO DATA NOME DO CLIENTE...") is
-# static -- always on screen regardless of whether the table actually has data --
-# and long enough on its own to pass classify_table_region's min_chars gate. If
-# the crop also picks up some watermark noise but the real content underneath
-# (a genuine data row, or "No data available") doesn't come through legibly, the
-# header alone would otherwise be enough to wrongly default to "data" (seen in
-# practice: a record eliminated based on header + noise, with no real evidence of
-# an actual result). It's stripped out before that final decision so only
-# genuinely per-record content counts.
-HEADER_PHRASE = (
-    "movimento data nome do cliente endereco complemento bairro cidade cep "
-    "parque plano origem tecnologia"
-)
-
 
 def classify_table_region(x1, y1, x2, y2, min_chars: int = 6, match_threshold: float = 0.55,
                            fast: bool = False):
@@ -225,12 +211,7 @@ def classify_table_region(x1, y1, x2, y2, min_chars: int = 6, match_threshold: f
     # of Z entries" footer (unused today) is a cleaner signal if this needs
     # revisiting, since it's a single number rather than a garbled row of text.
     cleaned_best = re.sub(r"[^a-z]", "", best_text.lower())
-    residual = cleaned_best
-    header_target = re.sub(r"[^a-z]", "", HEADER_PHRASE)
-    header_ratio, hstart, hend = _best_substring_match(cleaned_best, header_target)
-    if header_ratio >= match_threshold:
-        residual = cleaned_best[:hstart] + cleaned_best[hend:]
-    if len(residual) >= min_chars:
+    if len(cleaned_best) >= min_chars:
         return "data", best_text
     return "inconclusive", best_text
 
