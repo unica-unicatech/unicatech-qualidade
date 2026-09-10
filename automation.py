@@ -226,9 +226,17 @@ class AutomationRunner:
         every time, because the digit-only OCR call uses psm 7 (single text line)
         -- it doesn't ever misread the label, it just fails outright on a
         two-line image. The click point itself is calibrated to sit inside the
-        actual input, so cropping around just that stays single-line."""
+        actual input, so cropping around just that stays single-line.
+
+        Horizontal pad is deliberately modest: on a tighter layout (seen on a
+        1600x900 machine vs. the 1920x1080 one this was tuned on), the fields
+        sit close enough together that a wide crop pulls in the neighboring
+        input box and even part of the Pesquisar button -- debug screenshots
+        showed exactly that, with OCR then garbling the reading (e.g. reading
+        '45102606' for an 8-digit CEP, or empty) despite the correct value
+        being clearly visible in the crop."""
         x, y = self._locate_click_point(win, name)
-        return x - 145, y - 22, x + 145, y + 22
+        return x - 70, y - 20, x + 70, y + 20
 
     def _locate_region_box(self, win, name: str, pad: int = 8):
         """Where `name` (app_marker_region/table_row_region) is for this window, as
