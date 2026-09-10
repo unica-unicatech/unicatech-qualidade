@@ -213,15 +213,37 @@ class AutomationRunner:
             del self._region_cache[key]
 
     # ---------- per-record processing ----------
-    def _fill_field(self, win, field_name: str, value: str):
+    def _read_field_digits(self, win, field_name: str) -> str:
         x, y = self._locate_click_point(win, field_name)
-        pyautogui.click(x, y, duration=MOUSE_MOVE_SECONDS)
-        time.sleep(0.15)
-        pyautogui.hotkey("ctrl", "a")
-        pyautogui.press("delete")
-        time.sleep(0.1)
-        pyautogui.typewrite(value, interval=0.02)
-        time.sleep(0.1)
+        text = ocr_utils.read_digits(x - 145, y - 22, x + 145, y + 22)
+        return re.sub(r"\D", "", text)
+
+    def _fill_field(self, win, field_name: str, value: str):
+        """Type `value` into the field, then OCR-read it back and retype (slower)
+        if it doesn't match. On some machines/sessions (seen with Citrix over a
+        laggier connection), typing digits too fast makes the remote app register
+        each keystroke twice -- e.g. '776' arrives as '777766'. Reading the field
+        back and retrying catches that instead of silently submitting a corrupted
+        value."""
+        x, y = self._locate_click_point(win, field_name)
+        attempts = 3
+        for attempt in range(attempts):
+            pyautogui.click(x, y, duration=MOUSE_MOVE_SECONDS)
+            time.sleep(0.15)
+            pyautogui.hotkey("ctrl", "a")
+            pyautogui.press("delete")
+            time.sleep(0.1)
+            interval = 0.05 + attempt * 0.05
+            pyautogui.typewrite(value, interval=interval)
+            time.sleep(0.15)
+            if not value:
+                return
+            got = self._read_field_digits(win, field_name)
+            if got == value:
+                return
+            self.log(f"   Aviso: campo {field_name} leu '{got}' (esperado '{value}'), "
+                     f"tentativa {attempt + 1}/{attempts}.")
+        self.log(f"   Aviso: campo {field_name} pode ter ficado incorreto após {attempts} tentativas.")
 
     def _start_search(self, cnpj: str, win):
         """Fill CEP + Número and hit Pesquisar. Does NOT wait for the result --
