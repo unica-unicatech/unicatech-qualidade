@@ -28,6 +28,7 @@ CONFIG_PATH = Path(__file__).parent / "config.json"
 CONFIDENCE = 0.82
 RETRIES = 3
 RETRY_DELAY_SECONDS = 0.4
+MAX_DRIFT_PX = 60  # see try_auto_calibrate's _guarded_point
 
 POINT_ELEMENTS = ["cep_field", "numero_field", "pesquisar_button"]
 REGION_ELEMENTS = ["app_marker_region", "table_row_region"]
@@ -166,13 +167,33 @@ def try_auto_calibrate(log=print) -> bool:
         except Exception:
             pass
 
+    def _guarded_point(name, new_x, new_y):
+        """Keep the freshly-detected point, UNLESS it drifted too far from the
+        last manually-calibrated one for this field. cep_field/numero_field/
+        documento_field are near-identical blank input boxes, so appearance
+        matching can confidently lock onto the WRONG one of the three (seen in
+        practice: CEP's point landing on the Documento field) -- and since this
+        function is what (re)writes config.json on every app startup, a bad
+        match here would silently overwrite a correct manual calibration before
+        the user ever gets to run anything. When that happens, keep the old
+        point and flag it instead of trusting the new one."""
+        old = old_config.get(name)
+        if old is not None:
+            dx, dy = new_x - old["x"], new_y - old["y"]
+            if (dx * dx + dy * dy) ** 0.5 > MAX_DRIFT_PX:
+                log(f"  Aviso: detecção por imagem de '{name}' ({new_x},{new_y}) ficou longe da "
+                    f"última calibração manual ({old['x']},{old['y']}) -- mantendo a calibração manual. "
+                    f"Se o layout realmente mudou, recalibre manualmente.")
+                return {"x": old["x"], "y": old["y"]}
+        return {"x": new_x, "y": new_y}
+
     config = {
         "window_title_contains": citrix_utils.stable_title_anchor(win.title),
         "wait_after_search_seconds": old_config.get("wait_after_search_seconds", 3.5),
         "delay_between_cnpjs_seconds": old_config.get("delay_between_cnpjs_seconds", 0.7),
         "tesseract_cmd": old_config.get("tesseract_cmd", r"C:\Program Files\Tesseract-OCR\tesseract.exe"),
-        "cep_field": {"x": int(cep_pos.x - win.left), "y": int(cep_pos.y - win.top)},
-        "numero_field": {"x": int(numero_pos.x - win.left), "y": int(numero_pos.y - win.top)},
+        "cep_field": _guarded_point("cep_field", int(cep_pos.x - win.left), int(cep_pos.y - win.top)),
+        "numero_field": _guarded_point("numero_field", int(numero_pos.x - win.left), int(numero_pos.y - win.top)),
         "pesquisar_button": {"x": int(btn_pos.x - win.left), "y": int(btn_pos.y - win.top)},
         "app_marker_region": {
             "x1": int(marker_box.left - win.left), "y1": int(marker_box.top - win.top),
