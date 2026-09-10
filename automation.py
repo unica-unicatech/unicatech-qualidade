@@ -16,6 +16,21 @@ import auto_detect
 import citrix_utils
 import ocr_utils
 
+try:
+    import win32clipboard
+    _HAS_CLIPBOARD = True
+except ImportError:
+    _HAS_CLIPBOARD = False
+
+
+def _set_clipboard_text(text: str):
+    win32clipboard.OpenClipboard()
+    try:
+        win32clipboard.EmptyClipboard()
+        win32clipboard.SetClipboardText(text, win32clipboard.CF_TEXT)
+    finally:
+        win32clipboard.CloseClipboard()
+
 STATE_DIR = Path(__file__).parent / "state"
 STATE_DIR.mkdir(exist_ok=True)
 OUTPUT_DIR = Path(__file__).parent / "output"
@@ -219,25 +234,40 @@ class AutomationRunner:
         return re.sub(r"\D", "", text)
 
     def _fill_field(self, win, field_name: str, value: str):
-        """Type `value` into the field, then OCR-read it back and retype (slower)
-        if it doesn't match. On some machines/sessions (seen with Citrix over a
-        laggier connection), typing digits too fast makes the remote app register
-        each keystroke twice -- e.g. '776' arrives as '777766'. Reading the field
-        back and retrying catches that instead of silently submitting a corrupted
-        value."""
+        """Fill the field and OCR-read it back, retrying if it doesn't match.
+
+        On some machines/sessions (seen with Citrix over a laggier connection),
+        simulating individual keystrokes makes the remote app register each key
+        twice -- e.g. '776' arrives as '777766' -- no matter how slow the typing
+        interval is, since the duplication happens per keystroke, not between
+        keystrokes. Pasting via clipboard sends the whole value as one paste
+        action instead of N keystrokes, which sidesteps that entirely, so it's
+        tried first; typing (progressively slower) is the fallback in case
+        clipboard isn't mapped through to this session."""
         x, y = self._locate_click_point(win, field_name)
-        attempts = 3
+        if not value:
+            pyautogui.click(x, y, duration=MOUSE_MOVE_SECONDS)
+            time.sleep(0.15)
+            pyautogui.hotkey("ctrl", "a")
+            pyautogui.press("delete")
+            time.sleep(0.1)
+            return
+
+        attempts = 4
         for attempt in range(attempts):
             pyautogui.click(x, y, duration=MOUSE_MOVE_SECONDS)
             time.sleep(0.15)
             pyautogui.hotkey("ctrl", "a")
             pyautogui.press("delete")
             time.sleep(0.1)
-            interval = 0.05 + attempt * 0.05
-            pyautogui.typewrite(value, interval=interval)
+            if attempt == 0 and _HAS_CLIPBOARD:
+                _set_clipboard_text(value)
+                time.sleep(0.05)
+                pyautogui.hotkey("ctrl", "v")
+            else:
+                interval = 0.05 + attempt * 0.05
+                pyautogui.typewrite(value, interval=interval)
             time.sleep(0.15)
-            if not value:
-                return
             got = self._read_field_digits(win, field_name)
             if got == value:
                 return
