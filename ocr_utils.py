@@ -37,6 +37,25 @@ def grab_region(x1, y1, x2, y2) -> Image.Image:
     return ImageGrab.grab(bbox=(x1, y1, x2, y2), all_screens=True)
 
 
+def grab_region_gray(x1, y1, x2, y2) -> np.ndarray:
+    """Cheap grayscale snapshot of a region, for detecting whether it visibly
+    changed between two points in time (see region_changed) -- no OCR involved,
+    just pixel comparison."""
+    img = grab_region(x1, y1, x2, y2)
+    return np.array(ImageOps.grayscale(img), dtype=np.float32)
+
+
+def region_changed(before: np.ndarray, after: np.ndarray, threshold: float = 8.0) -> bool:
+    """True if `after` looks meaningfully different from `before`. Used to detect
+    that the results table actually refreshed after a new search, instead of
+    trusting whatever's on screen the instant our fixed post-click wait elapses
+    -- on a slower page load, that can still be the PREVIOUS search's table,
+    read and classified as if it were this record's result."""
+    if before is None or after is None or before.shape != after.shape:
+        return True
+    return bool(np.abs(before - after).mean() > threshold)
+
+
 def _upscale(img: Image.Image, scale: int = 4) -> Image.Image:
     return img.resize((max(1, img.width * scale), max(1, img.height * scale)), Image.LANCZOS)
 

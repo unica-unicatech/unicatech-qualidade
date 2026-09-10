@@ -80,6 +80,7 @@ class AutomationRunner:
         self._region_cache = {}  # (win.left, win.top, element_name) -> (x1,y1,x2,y2), see _locate_region_box
         self._force_recheck_login = True  # re-check on the very first item / right after a resume
         self._data_signatures = []  # cleaned "data" OCR texts seen so far, see _read_result
+        self._pre_search_snapshot = {}  # (win.left, win.top) -> pre-click table snapshot, see _start_search
 
         self._load_checkpoint_if_matching()
 
@@ -342,6 +343,13 @@ class AutomationRunner:
         self._fill_field(win, "cep_field", record["cep"])
         self._fill_field(win, "numero_field", record["numero"])
 
+        # Snapshot the table region right before clicking Pesquisar, so
+        # _read_result can tell whether it's still looking at the PREVIOUS
+        # search's table (page hasn't refreshed yet) instead of trusting
+        # whatever's on screen the instant the fixed post-click wait elapses.
+        rx1, ry1, rx2, ry2 = self._locate_region_box(win, "table_row_region")
+        self._pre_search_snapshot[(win.left, win.top)] = ocr_utils.grab_region_gray(rx1, ry1, rx2, ry2)
+
         # Detected right before clicking (not up front) -- some layouts style the
         # button differently while the fields are still empty vs. filled in.
         btn_x, btn_y = self._locate_click_point(win, "pesquisar_button")
@@ -420,6 +428,20 @@ class AutomationRunner:
             return STATUS_ERROR
 
         rx1, ry1, rx2, ry2 = self._locate_region_box(win, "table_row_region")
+
+        before = self._pre_search_snapshot.get((win.left, win.top))
+        if before is not None:
+            for _ in range(4):
+                after = ocr_utils.grab_region_gray(rx1, ry1, rx2, ry2)
+                if ocr_utils.region_changed(before, after):
+                    break
+                self.log(f"   [{cnpj}] (debug) tabela ainda igual à busca anterior -- "
+                         f"aguardando a página atualizar...")
+                time.sleep(1.0)
+            # Not blocking indefinitely: if it genuinely never changes (e.g. two
+            # consecutive records that both happen to have no data, which render
+            # pixel-identical), fall through and classify whatever's there once
+            # this bounded wait is spent, same as before this check existed.
 
         best_text = ""
         for attempt in range(1, OCR_RETRIES + 1):
