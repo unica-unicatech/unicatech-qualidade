@@ -255,17 +255,32 @@ class AutomationRunner:
         text = ocr_utils.read_digits(x1, y1, x2, y2)
         return re.sub(r"\D", "", text)
 
+    def _read_field_digits_settled(self, win, field_name: str, expected: str) -> str:
+        """Poll the field a few times instead of reading once immediately after
+        filling it. On a laggier Citrix session, the remote screen can take longer
+        than our fixed post-fill pause to visually update, so a single read right
+        away can see a stale/blank field even though the paste/type already
+        landed correctly -- this waits for the read to either match or stabilize
+        instead of trusting the very first snapshot."""
+        got = ""
+        for _ in range(4):
+            got = self._read_field_digits(win, field_name)
+            if got == expected:
+                return got
+            time.sleep(0.25)
+        return got
+
     def _fill_field(self, win, field_name: str, value: str):
         """Fill the field and OCR-read it back, retrying if it doesn't match.
 
-        On some machines/sessions (seen with Citrix over a laggier connection),
-        simulating individual keystrokes makes the remote app register each key
-        twice -- e.g. '776' arrives as '777766' -- no matter how slow the typing
-        interval is, since the duplication happens per keystroke, not between
-        keystrokes. Pasting via clipboard sends the whole value as one paste
-        action instead of N keystrokes, which sidesteps that entirely, so it's
-        tried first; typing (progressively slower) is the fallback in case
-        clipboard isn't mapped through to this session."""
+        Always fills via clipboard paste (one paste action for the whole value)
+        when available -- proven reliable across machines/sessions, unlike
+        simulating individual keystrokes: on some PCs (seen with Citrix over a
+        laggier connection), typed keystrokes get registered twice by the remote
+        app regardless of typing speed (e.g. '776' arrives as '777766'), so typing
+        is only ever used as a last-resort fallback when clipboard isn't
+        available, never as a "retry" for a paste that just needed more time to
+        show up on screen (see _read_field_digits_settled)."""
         x, y = self._locate_click_point(win, field_name)
         if not value:
             pyautogui.click(x, y, duration=MOUSE_MOVE_SECONDS)
@@ -275,14 +290,14 @@ class AutomationRunner:
             time.sleep(0.1)
             return
 
-        attempts = 4
+        attempts = 3
         for attempt in range(attempts):
             pyautogui.click(x, y, duration=MOUSE_MOVE_SECONDS)
             time.sleep(0.15)
             pyautogui.hotkey("ctrl", "a")
             pyautogui.press("delete")
             time.sleep(0.1)
-            if attempt == 0 and _HAS_CLIPBOARD:
+            if _HAS_CLIPBOARD:
                 _set_clipboard_text(value)
                 time.sleep(0.05)
                 pyautogui.hotkey("ctrl", "v")
@@ -290,7 +305,7 @@ class AutomationRunner:
                 interval = 0.05 + attempt * 0.05
                 pyautogui.typewrite(value, interval=interval)
             time.sleep(0.15)
-            got = self._read_field_digits(win, field_name)
+            got = self._read_field_digits_settled(win, field_name, value)
             if got == value:
                 return
             debug_path = self._save_field_debug_shot(win, field_name, attempt)
