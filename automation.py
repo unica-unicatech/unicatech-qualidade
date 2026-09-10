@@ -383,6 +383,25 @@ class AutomationRunner:
         for seen in self._data_signatures:
             if difflib.SequenceMatcher(None, cleaned, seen).ratio() >= 0.88:
                 return True
+        return self._has_internal_repeat(cleaned)
+
+    @staticmethod
+    def _has_internal_repeat(cleaned: str, chunk_len: int = 7) -> bool:
+        """Catches watermark noise on its very FIRST appearance (before there's
+        any prior reading to compare against): a watermark tiles/repeats within
+        the page, so it tends to show the same chunk of garbled text twice
+        within the SAME crop (e.g. literally 'ODA Seal) (1) ODA Seal) (1)').
+        Genuine table content (column headers, an address, a name) doesn't
+        repeat a 7+ character run of itself like that."""
+        n = len(cleaned)
+        if n < chunk_len * 2:
+            return False
+        seen_chunks = set()
+        for i in range(n - chunk_len + 1):
+            chunk = cleaned[i:i + chunk_len]
+            if chunk in seen_chunks:
+                return True
+            seen_chunks.add(chunk)
         return False
 
     def _read_result(self, cnpj: str, win, verify: bool = False) -> str:
