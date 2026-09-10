@@ -297,42 +297,23 @@ class AutomationRunner:
         text = ocr_utils.read_digits(x1, y1, x2, y2)
         return re.sub(r"\D", "", text)
 
-    def _read_field_digits_settled(self, win, field_name: str, expected: str) -> str:
-        """Poll the field a few times instead of reading once immediately after
-        filling it. On a laggier Citrix session, the remote screen can take longer
-        than our fixed post-fill pause to visually update, so a single read right
-        away can see a stale/blank field even though the paste/type already
-        landed correctly -- this waits for the read to either match or stabilize
-        instead of trusting the very first snapshot."""
-        got = ""
-        for _ in range(8):
-            got = self._read_field_digits(win, field_name)
-            if got == expected:
-                return got
-            time.sleep(0.35)
-        return got
-
     def _fill_field(self, win, field_name: str, value: str):
-        """Fill the field, then OCR-read it back purely for diagnostics.
-
-        Fills via a SINGLE clipboard paste (one paste action for the whole value)
-        when available -- across every debug screenshot gathered while chasing
-        field-corruption reports, paste never once actually failed to land the
-        correct value. Typing (simulating individual keystrokes) is only used as
-        a fallback when clipboard isn't available at all, since it has an actual
-        proven failure mode: on some PCs/sessions, typed keystrokes get
-        registered twice by the remote app regardless of speed (e.g. '776'
+        """Fill the field via a single clipboard paste (one paste action for the
+        whole value) when available -- across every debug screenshot gathered
+        while chasing field-corruption reports, paste never once actually failed
+        to land the correct value. Typing (simulating individual keystrokes) is
+        only used as a fallback when clipboard isn't available at all, since it
+        has an actual proven failure mode: on some PCs/sessions, typed keystrokes
+        get registered twice by the remote app regardless of speed (e.g. '776'
         arrives as '777766').
 
-        This does NOT retry by re-clicking/re-pasting on an OCR mismatch anymore
-        -- that used to be the ONLY thing corrupting an already-correct value
-        (either via the typing-duplication bug above, or by re-clicking mid-fill
-        and landing wrong). The digit-only OCR readback is also just unreliable
-        on short values (e.g. misread '26' as '196' -- clearly visible as
-        correct '26' in the saved debug screenshot), so treating a mismatch as
-        "must retry" caused more harm (repeated re-pasting, risk of interfering
-        with the next click) than it ever prevented. A mismatch is now only
-        logged, with a debug screenshot, so real failures are still visible."""
+        There used to be an OCR readback here to verify the fill and retry on
+        mismatch, but it was doing more harm than good: it never once caught a
+        genuine paste failure, it regularly misread short values (e.g. read
+        '196' for a correct, clearly-legible '26'), and "retrying" on those
+        false alarms -- by re-clicking/re-pasting -- was the actual source of
+        every real corruption seen (the typing-duplication bug above, and
+        re-clicks landing wrong mid-fill)."""
         x, y = self._locate_click_point(win, field_name)
         pyautogui.click(x, y, duration=MOUSE_MOVE_SECONDS)
         time.sleep(0.15)
@@ -349,30 +330,6 @@ class AutomationRunner:
         else:
             pyautogui.typewrite(value, interval=0.05)
         time.sleep(0.15)
-
-        got = self._read_field_digits_settled(win, field_name, value)
-        if got != value:
-            debug_path = self._save_field_debug_shot(win, field_name, 0)
-            self.log(f"   Aviso: campo {field_name} leu '{got}' (esperado '{value}') -- "
-                     f"pode ser ruído de OCR, não necessariamente erro de preenchimento. "
-                     f"Print salvo em: {debug_path}")
-
-    def _save_field_debug_shot(self, win, field_name: str, attempt: int) -> str:
-        """Save exactly the region the OCR verification is reading, so a failed
-        readback can be diagnosed from the actual pixels instead of guesswork
-        (e.g. a click/coordinate offset -- possible on a PC with display scaling
-        different from 100% -- would show up here as the crop landing on the
-        wrong spot, or the field looking empty/blank in the image itself)."""
-        try:
-            debug_dir = OUTPUT_DIR / "debug_field_reads"
-            debug_dir.mkdir(exist_ok=True)
-            x1, y1, x2, y2 = self._field_ocr_box(win, field_name)
-            img = ocr_utils.grab_region(x1, y1, x2, y2)
-            path = debug_dir / f"{field_name}_{int(time.time())}_{attempt}.png"
-            img.save(path)
-            return str(path)
-        except Exception as exc:
-            return f"(falha ao salvar print: {exc})"
 
     def _start_search(self, cnpj: str, win):
         """Fill CEP + Número and hit Pesquisar. Does NOT wait for the result --
