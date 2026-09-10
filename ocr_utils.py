@@ -190,17 +190,26 @@ def classify_table_region(x1, y1, x2, y2, min_chars: int = 6, match_threshold: f
     invalid_target = re.sub(r"[^a-z]", "", INVALID_INPUT_PHRASE)
     psm_modes = PSM_MODES_FAST if fast else PSM_MODES
     best_text = ""
-    best_empty_ratio = 0.0
+    # (newline_count, -length): the table's real row is genuinely one line, so a
+    # cleanly-read single-line result is trusted over a longer but messier one.
+    # This matters because a scattered/sparse PSM mode can dump the SAME content
+    # one word per line (many newlines) -- and that shape, despite being real
+    # data, can coincidentally score close to the "no data available in table"
+    # phrase (shared words like "data"/"table" landing on their own lines), while
+    # the clean single-line read of the exact same row scores clearly low. Picking
+    # "longest text wins" as the candidate to trust was choosing the noisier,
+    # more misleading reading over the cleaner one.
+    best_key = None
     for variant in _preprocess_variants(img, fast=fast):
         for psm in psm_modes:
             text = pytesseract.image_to_string(variant, config=f"--psm {psm}").strip()
-            if len(text) > len(best_text):
+            key = (text.count("\n"), -len(text))
+            if best_key is None or key < best_key:
+                best_key = key
                 best_text = text
             cleaned = re.sub(r"[^a-z]", "", text.lower())
             if len(cleaned) >= min_chars:
-                empty_ratio = _best_substring_ratio(cleaned, empty_target)
-                best_empty_ratio = max(best_empty_ratio, empty_ratio)
-                if empty_ratio >= match_threshold:
+                if _best_substring_ratio(cleaned, empty_target) >= match_threshold:
                     return "empty", text
                 if _best_substring_ratio(cleaned, invalid_target) >= match_threshold:
                     return "invalid_input", text
@@ -209,13 +218,14 @@ def classify_table_region(x1, y1, x2, y2, min_chars: int = 6, match_threshold: f
     # phrase (seen in practice: 0.45, e.g. a watermark partially obscuring "No
     # data available in table") is much more likely to mean "actually empty,
     # just hard to read" than "actually real data" -- so it should NOT fall
-    # through to the "data" default below. Treating it as inconclusive lets the
-    # caller retry (watermark drifts, a later attempt may read cleanly) instead
-    # of confidently eliminating a record based on a near-miss.
-    if best_empty_ratio >= 0.40:
+    # through to the "data" default below. Only checked against the single
+    # best_text chosen above (not the max over every variant tried) -- checking
+    # every variant let one unlucky noisy reading veto an otherwise-clean "data"
+    # result (see the newline-preference comment above for the concrete case).
+    cleaned_best = re.sub(r"[^a-z]", "", best_text.lower())
+    if len(cleaned_best) >= min_chars and _best_substring_ratio(cleaned_best, empty_target) >= 0.40:
         return "inconclusive", best_text
 
-    cleaned_best = re.sub(r"[^a-z]", "", best_text.lower())
     residual = cleaned_best
     header_target = re.sub(r"[^a-z]", "", HEADER_PHRASE)
     header_ratio, hstart, hend = _best_substring_match(cleaned_best, header_target)
