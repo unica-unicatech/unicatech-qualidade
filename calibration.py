@@ -172,5 +172,60 @@ def load_config():
     return json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
 
 
+def calibrate_result_banners(log=print) -> bool:
+    """Optional, separate mini-calibration for the two result banners ('No data
+    available in table' / the red invalid-CEP-Número banner). Kept apart from
+    run_calibration() -- it requires the site to actually be SHOWING each state
+    at capture time (a real empty search, then a real invalid one), which isn't
+    true during normal calibration, and skipping it shouldn't force the whole
+    main wizard to be redone.
+
+    Once captured, automation.py recognizes these states by their on-screen
+    APPEARANCE (like it already does for buttons/fields) instead of trying to
+    OCR-read the row's text -- much more tolerant of a watermark overlapping it,
+    since it doesn't need to make out individual characters, just the overall
+    shape. Without these templates, automation.py falls back to the older
+    OCR-based classification, so this is safe to skip or redo at any time.
+    """
+    log("=== CALIBRAÇÃO DOS AVISOS DE RESULTADO (opcional) ===")
+    log("Isso ensina o sistema a RECONHECER (por aparência, não por texto) os avisos "
+        "que a tabela mostra quando não há dado ou quando o CEP/Número é inválido -- "
+        "mais confiável que ler o texto quando a marca d'água da sessão atrapalha.")
+
+    log("\n> Primeiro, faça uma busca com um CEP/Número que você sabe que NÃO retorna "
+        "dado nenhum (mostra 'No data available in table'). Deixe essa tela visível.")
+    log("> Posicione o mouse no CANTO SUPERIOR ESQUERDO do aviso 'No data available in table'.")
+    tl = _wait_for_capture(log)
+    if tl is None:
+        log("Cancelado.")
+        return False
+    log("> Agora o CANTO INFERIOR DIREITO desse mesmo aviso.")
+    br = _wait_for_capture(log)
+    if br is None:
+        log("Cancelado.")
+        return False
+    box = (min(tl.x, br.x), min(tl.y, br.y), max(tl.x, br.x), max(tl.y, br.y))
+    _save_template("no_data_banner", box, log)
+
+    log("\n> Agora faça uma busca com um CEP ou Número INVÁLIDO (ex: com letras), "
+        "pra ver o aviso vermelho de 'preencha o documento... /número inválido'. "
+        "Deixe essa tela visível.")
+    log("> Posicione o mouse no CANTO SUPERIOR ESQUERDO desse aviso vermelho.")
+    tl2 = _wait_for_capture(log)
+    if tl2 is None:
+        log("Cancelado (o aviso de 'sem dados' já foi salvo, só esse ficou de fora).")
+        return False
+    log("> Agora o CANTO INFERIOR DIREITO desse aviso vermelho.")
+    br2 = _wait_for_capture(log)
+    if br2 is None:
+        log("Cancelado (o aviso de 'sem dados' já foi salvo, só esse ficou de fora).")
+        return False
+    box2 = (min(tl2.x, br2.x), min(tl2.y, br2.y), max(tl2.x, br2.x), max(tl2.y, br2.y))
+    _save_template("invalid_input_banner", box2, log)
+
+    log("\nCalibração dos avisos concluída.")
+    return True
+
+
 if __name__ == "__main__":
     run_calibration()

@@ -50,6 +50,8 @@ class App(tk.Tk):
         self.pause_btn.grid(row=0, column=4, padx=4)
         self.stop_btn = ttk.Button(top, text="Parar", command=self._on_stop, state="disabled")
         self.stop_btn.grid(row=0, column=5, padx=4)
+        ttk.Button(top, text="Calibrar avisos da tabela (opcional)", command=self._on_calibrate_banners).grid(
+            row=1, column=0, columnspan=2, padx=4, pady=(4, 0), sticky="w")
 
         top2 = ttk.Frame(self, padding=(10, 0))
         top2.pack(fill="x")
@@ -110,6 +112,20 @@ class App(tk.Tk):
                 self.log("Calibração concluída com sucesso.")
             else:
                 self.log("Calibração não foi concluída.")
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _on_calibrate_banners(self):
+        if self.runner_thread and self.runner_thread.is_alive():
+            messagebox.showwarning("Aviso", "Pare a automação antes de calibrar novamente.")
+            return
+
+        def worker():
+            ok = calibration.calibrate_result_banners(log=self.log)
+            if ok:
+                self.log("Calibração dos avisos concluída com sucesso.")
+            else:
+                self.log("Calibração dos avisos não foi concluída.")
 
         threading.Thread(target=worker, daemon=True).start()
 
