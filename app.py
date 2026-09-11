@@ -50,7 +50,7 @@ class App(tk.Tk):
         self.pause_btn.grid(row=0, column=4, padx=4)
         self.stop_btn = ttk.Button(top, text="Parar", command=self._on_stop, state="disabled")
         self.stop_btn.grid(row=0, column=5, padx=4)
-        ttk.Button(top, text="Calibrar avisos da tabela (opcional)", command=self._on_calibrate_banners).grid(
+        ttk.Button(top, text="Calibrar aviso de tabela vazia (opcional)", command=self._on_calibrate_banners).grid(
             row=1, column=0, columnspan=2, padx=4, pady=(4, 0), sticky="w")
 
         top2 = ttk.Frame(self, padding=(10, 0))

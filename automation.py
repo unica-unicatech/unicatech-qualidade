@@ -413,29 +413,27 @@ class AutomationRunner:
         return False
 
     def _classify_table_by_image(self, win):
-        """Recognize the table's result state by the on-screen APPEARANCE of the
-        'no data'/'invalid input' banners (see calibration.calibrate_result_banners)
+        """Recognize whether the table shows 'no data' by the on-screen
+        APPEARANCE of that banner (see calibration.calibrate_result_banners)
         instead of OCR-reading the row's text. Much more tolerant of the session
         watermark than character-level OCR -- it only needs to match the overall
         shape (same appearance-matching-with-retries as auto_detect already uses
         for buttons/fields, which already proved workable against this same
         watermark), not make out individual letters.
 
-        Returns "empty", "invalid_input", "data", or None if these optional
-        banner templates haven't been calibrated -- callers should fall back to
-        OCR-based classify_table_region in that case."""
+        Only distinguishes empty vs. has-data -- whether the CEP/Número itself
+        was invalid doesn't change the KEEP/ELIMINATE decision, so that state
+        isn't checked here (it still gets detected by the OCR fallback below
+        when these banner templates aren't calibrated at all).
+
+        Returns "empty", "data", or None if the banner template hasn't been
+        calibrated -- callers should fall back to OCR-based
+        classify_table_region in that case."""
         if not auto_detect.variant_paths("no_data_banner"):
             return None
         region = (win.left, win.top, win.width, win.height)
         no_data_box, _ = auto_detect._locate_box("no_data_banner", lambda *a, **k: None, region=region)
-        if no_data_box is not None:
-            return "empty"
-        if auto_detect.variant_paths("invalid_input_banner"):
-            invalid_box, _ = auto_detect._locate_box(
-                "invalid_input_banner", lambda *a, **k: None, region=region)
-            if invalid_box is not None:
-                return "invalid_input"
-        return "data"
+        return "empty" if no_data_box is not None else "data"
 
     def _read_result(self, cnpj: str, win, verify: bool = False) -> str:
         """OCR-classify the results table for the search already triggered on `win`.
@@ -473,12 +471,8 @@ class AutomationRunner:
             if image_kind == "empty":
                 self.log(f"   [{cnpj}] (debug) tabela lida como VAZIA (reconhecida por imagem).")
                 return STATUS_KEEP
-            if image_kind == "invalid_input":
-                self.log(f"   [{cnpj}] (debug) CEP/Número inválido ou vazio nessa linha da planilha "
-                         f"(reconhecido por imagem).")
-                return STATUS_INVALID_INPUT
-            self.log(f"   [{cnpj}] (debug) tabela lida como COM DADOS (nenhum dos avisos de "
-                     f"vazio/inválido foi reconhecido na tela).")
+            self.log(f"   [{cnpj}] (debug) tabela lida como COM DADOS (aviso de vazio não "
+                     f"reconhecido na tela).")
             return STATUS_ELIMINATE
 
         best_text = ""
