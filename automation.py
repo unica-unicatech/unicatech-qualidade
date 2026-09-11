@@ -466,13 +466,24 @@ class AutomationRunner:
             # pixel-identical), fall through and classify whatever's there once
             # this bounded wait is spent, same as before this check existed.
 
-        image_kind = self._classify_table_by_image(win)
-        if image_kind is not None:
-            if image_kind == "empty":
-                self.log(f"   [{cnpj}] (debug) tabela lida como VAZIA (reconhecida por imagem).")
-                return STATUS_KEEP
+        if auto_detect.variant_paths("no_data_banner"):
+            # Don't trust "banner not found" on the very first look -- a slow
+            # page load can still be rendering (spinner, blank transition) at
+            # that instant, which looks identical to "not found" and would
+            # otherwise get read as "has data" and wrongly eliminate the
+            # record. Keep checking for a while before concluding that.
+            for attempt in range(1, OCR_RETRIES + 1):
+                image_kind = self._classify_table_by_image(win)
+                if image_kind == "empty":
+                    self.log(f"   [{cnpj}] (debug) tabela lida como VAZIA (reconhecida por imagem).")
+                    return STATUS_KEEP
+                if attempt < OCR_RETRIES:
+                    self.log(f"   [{cnpj}] (debug) aviso de vazio ainda não apareceu na tela "
+                             f"(tentativa {attempt}/{OCR_RETRIES}) -- pode estar carregando. "
+                             f"Aguardando mais um pouco...")
+                    time.sleep(1.5)
             self.log(f"   [{cnpj}] (debug) tabela lida como COM DADOS (aviso de vazio não "
-                     f"reconhecido na tela).")
+                     f"reconhecido na tela após {OCR_RETRIES} tentativas).")
             return STATUS_ELIMINATE
 
         best_text = ""
